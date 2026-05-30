@@ -1325,13 +1325,13 @@ function playOpening() {
   state = STATE.OPENING;
   showOverlayVideo(ASSETS.opening, () => {
     startGame();
-  }, 'Enterでスキップ');
+  }, '');
 }
 function playEndingVideo() {
   state = STATE.ENDING_VIDEO;
   showOverlayVideo(ASSETS.ending, () => {
     showEndingImage();
-  }, 'Enterでスキップ');
+  }, '');
 }
 function showEndingImage() {
   state = STATE.ENDING_IMAGE;
