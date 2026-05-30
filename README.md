@@ -6,10 +6,9 @@
 
 ### ▶️ いますぐブラウザでプレイ
 
-## **https://kou-playground.github.io/ai-hack2026-osaka-takoyaki/**
+## **https://kou-playground.github.io/ai-hack2026-osaka-takoyaki/turbine_dragster_afterburn.html**
 
-<sub>↑ カメラ付きPC（Chrome / Edge 推奨）で開いてください。インストール不要。</sub><br>
-<sub>直接リンク：<a href="https://kou-playground.github.io/ai-hack2026-osaka-takoyaki/turbine_dragster_afterburn.html">turbine_dragster_afterburn.html</a></sub>
+<sub>↑ カメラ付きPC（Chrome / Edge 推奨）で開いてください。インストール不要。</sub>
 
 <br>
 
@@ -124,7 +123,7 @@ cd ai-hack2026-osaka-takoyaki
 python -m http.server 5501
 ```
 
-ブラウザで **http://localhost:5501/** を開けばプレイできます。
+ブラウザで **http://localhost:5501/turbine_dragster_afterburn.html** を開けばプレイできます。
 （VS Code の Live Server 拡張機能を使う場合はポート `5501` で `turbine_dragster_afterburn.html` を起動）
 
 ---
