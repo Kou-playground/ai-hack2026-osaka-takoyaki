@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>タービン・ドラッグ：アフターバーン</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --neon-cyan: #00f0ff;
+    --neon-pink: #ff2ad4;
+    --neon-yellow: #f7e23e;
+    --neon-orange: #ff7a18;
+    --neon-red: #ff1c4b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: #04030a; color: #fff;
+    font-family: -apple-system, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  #gameCanvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 1; }
+
+  /* 全画面オーバーレイ層 */
+  .overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: #04030a;
+  }
+  .overlay img, .overlay video {
+    width: 100vw; height: 100vh; object-fit: contain; background: #000;
+  }
+  .hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    z-index: 60; padding: 10px 22px; border-radius: 999px;
+    background: rgba(0,0,0,0.55); color: #fff;
+    font-size: 14px; letter-spacing: 0.05em;
+    border: 1px solid rgba(0,240,255,0.5);
+    box-shadow: 0 0 18px rgba(0,240,255,0.35);
+    backdrop-filter: blur(4px);
+  }
+
+  /* 許可画面 */
+  #permScreen {
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(255,42,212,0.25), transparent 60%),
+      radial-gradient(ellipse at 70% 80%, rgba(0,240,255,0.25), transparent 60%),
+      #04030a;
+    flex-direction: column; gap: 28px;
+  }
+  #permScreen h1 {
+    margin: 0; font-size: clamp(36px, 6vw, 84px);
+    font-weight: 900; letter-spacing: 0.04em; line-height: 1.05;
+    background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 30px rgba(255,42,212,0.35);
+    text-align: center;
+  }
+  #permScreen p { max-width: 720px; line-height: 1.7; text-align: center; color: #cfe; opacity: 0.9; }
+  #permBtn {
+    cursor: pointer; padding: 18px 46px; border-radius: 999px;
+    border: 2px solid var(--neon-cyan);
+    background: linear-gradient(90deg, rgba(0,240,255,0.18), rgba(255,42,212,0.18));
+    color: #fff; font-size: 22px; font-weight: 900; letter-spacing: 0.08em;
+    box-shadow: 0 0 24px rgba(0,240,255,0.6);
+    transition: transform 0.12s;
+  }
+  #permBtn:hover { transform: scale(1.04); }
+  #permStatus { font-size: 14px; color: #9aa; min-height: 1em; }
+
+  /* HUD（ゲーム中） */
+  #hud {
+    position: fixed; inset: 0; z-index: 10; pointer-events: none;
+    display: none;
+  }
+  #hud.show { display: block; }
+
+  #hudTop {
+    position: absolute; top: 14px; left: 18px; right: 18px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px;
+  }
+
+  .panel {
+    background: rgba(8,4,20,0.65);
+    border: 1px solid rgba(0,240,255,0.45);
+    box-shadow: 0 0 18px rgba(0,240,255,0.25), inset 0 0 12px rgba(0,240,255,0.08);
+    backdrop-filter: blur(6px);
+    border-radius: 14px;
+    padding: 10px 16px;
+  }
+  .panel.pink {
+    border-color: rgba(255,42,212,0.55);
+    box-shadow: 0 0 18px rgba(255,42,212,0.3), inset 0 0 12px rgba(255,42,212,0.08);
+  }
+
+  #speedPanel { min-width: 240px; text-align: left; }
+  #speedPanel .label { font-size: 11px; letter-spacing: 0.2em; color: var(--neon-cyan); }
+  #speedPanel .value {
+    font-family: "Courier New", monospace;
+    font-size: 60px; font-weight: 900; line-height: 1;
+    color: #fff; text-shadow: 0 0 12px var(--neon-cyan);
+  }
+  #speedPanel .unit { font-size: 14px; color: #9cd; margin-left: 6px; }
+  #speedPanel .max {
+    font-size: 12px; color: var(--neon-yellow); margin-top: 4px; letter-spacing: 0.15em;
+  }
+
+  #timePanel { text-align: center; min-width: 160px; }
+  #timePanel .label { font-size: 11px; letter-spacing: 0.2em; color: var(--neon-pink); }
+  #timePanel .value {
+    font-family: "Courier New", monospace; font-size: 56px; font-weight: 900;
+    color: var(--neon-yellow); line-height: 1; text-shadow: 0 0 12px var(--neon-yellow);
+  }
+
+  #statPanel { min-width: 260px; }
+  .meter { margin-top: 6px; }
+  .meter .row { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 0.12em; }
+  .meter .bar { height: 10px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-top: 3px; border: 1px solid rgba(255,255,255,0.12); }
+  .meter .fill { height: 100%; width: 0%; transition: width 0.1s linear; }
+  #throttleFill { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink)); }
+  #heatFill { background: linear-gradient(90deg, #ffd200, var(--neon-red)); }
+
+  /* 字幕（実況） */
+  #subtitle {
+    position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%);
+    max-width: 80vw; padding: 12px 22px;
+    background: linear-gradient(90deg, rgba(0,240,255,0.15), rgba(255,42,212,0.15));
+    border: 1px solid rgba(255,255,255,0.45);
+    border-radius: 12px;
+    font-size: 22px; font-weight: 800; letter-spacing: 0.04em;
+    color: #fff; text-shadow: 0 0 12px rgba(0,0,0,0.9);
+    box-shadow: 0 0 24px rgba(255,42,212,0.4);
+    display: none;
+    text-align: center;
+  }
+  #subtitle.show { display: block; }
+  #subtitle .who { font-size: 12px; color: var(--neon-cyan); display: block; margin-bottom: 4px; letter-spacing: 0.2em; }
+
+  /* カメラ＆検出表示 */
+  #camWrap {
+    position: fixed; right: 14px; bottom: 14px; z-index: 20;
+    width: 360px; height: 270px;
+    border-radius: 14px; overflow: hidden;
+    border: 2px solid rgba(0,240,255,0.7);
+    box-shadow: 0 0 24px rgba(0,240,255,0.6);
+    background: #000;
+    display: none;
+  }
+  #camWrap.show { display: block; }
+  #camVideo, #camOverlay {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+  }
+  #camVideo { transform: scaleX(-1); object-fit: cover; }
+  #camOverlay { pointer-events: none; }
+  #camStatus {
+    position: absolute; left: 8px; top: 8px;
+    display: flex; gap: 6px; flex-direction: column; font-size: 11px;
+  }
+  .chip {
+    padding: 3px 8px; border-radius: 6px;
+    background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25);
+    font-weight: 700; letter-spacing: 0.1em;
+  }
+  .chip.ok { color: #1bff8d; border-color: rgba(27,255,141,0.7); box-shadow: 0 0 8px rgba(27,255,141,0.5); }
+  .chip.ng { color: #ff5a7c; border-color: rgba(255,90,124,0.7); }
+  #camLabel {
+    position: absolute; right: 8px; top: 8px;
+    font-size: 10px; letter-spacing: 0.2em; color: var(--neon-cyan);
+    background: rgba(0,0,0,0.55); padding: 3px 8px; border-radius: 6px;
+    border: 1px solid rgba(0,240,255,0.5);
+  }
+
+  /* 警告フラッシュ */
+  #flash {
+    position: fixed; inset: 0; z-index: 15; pointer-events: none;
+    background: rgba(255,28,75,0.0);
+    transition: background 0.15s;
+  }
+  #flash.heat { background: rgba(255,28,75,0.18); animation: flashPulse 0.4s infinite alternate; }
+  @keyframes flashPulse { from { background: rgba(255,28,75,0.05);} to { background: rgba(255,28,75,0.28);} }
+
+  /* リザルト */
+  #result {
+    position: fixed; inset: 0; z-index: 30;
+    display: none; align-items: center; justify-content: center;
+    background:
+      radial-gradient(ellipse at 50% 40%, rgba(0,240,255,0.25), transparent 65%),
+      rgba(0,0,0,0.78);
+  }
+  #result.show { display: flex; }
+  #resultBox { text-align: center; padding: 36px 56px; border-radius: 18px;
+    background: rgba(10,4,28,0.85); border: 1px solid rgba(0,240,255,0.6);
+    box-shadow: 0 0 40px rgba(0,240,255,0.45);
+  }
+  #resultBox .title { font-size: 36px; color: var(--neon-yellow); letter-spacing: 0.2em; margin-bottom: 14px; }
+  #resultBox .max { font-size: 18px; color: #cdf; letter-spacing: 0.15em; }
+  #resultBox .speedNum {
+    font-family: "Courier New", monospace; font-weight: 900;
+    font-size: 120px; line-height: 1;
+    background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 24px rgba(0,240,255,0.55);
+  }
+  #resultBox .dist { font-size: 16px; color: #9cd; margin-top: 6px; letter-spacing: 0.12em; }
+
+  /* タイトルティッカー（ゲーム中の上中央） */
+  #ticker {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 0.4em; color: var(--neon-pink);
+    text-shadow: 0 0 8px rgba(255,42,212,0.7);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="ticker">TURBINE DRAG ▸ AFTERBURN</div>
+  <div id="hudTop">
+    <div class="panel" id="speedPanel">
+      <div class="label">SPEED</div>
+      <div><span class="value" id="speedValue">0</span><span class="unit">km/h</span></div>
+      <div class="max">MAX <span id="maxSpeedValue">0</span> km/h</div>
+    </div>
+    <div class="panel pink" id="timePanel">
+      <div class="label">TIME</div>
+      <div class="value" id="timeValue">30</div>
+    </div>
+    <div class="panel" id="statPanel">
+      <div class="meter">
+        <div class="row"><span>TURBINE POWER</span><span id="throttleText">0%</span></div>
+        <div class="bar"><div class="fill" id="throttleFill"></div></div>
+      </div>
+      <div class="meter">
+        <div class="row"><span>HEAT</span><span id="heatText">0%</span></div>
+        <div class="bar"><div class="fill" id="heatFill"></div></div>
+      </div>
+    </div>
+  </div>
+  <div id="subtitle"><span class="who"></span><span class="msg"></span></div>
+</div>
+
+<!-- カメラ表示（許可後ずっと表示） -->
+<div id="camWrap">
+  <video id="camVideo" autoplay playsinline muted></video>
+  <canvas id="camOverlay"></canvas>
+  <div id="camStatus">
+    <span class="chip ng" id="chipFace">FACE: NG</span>
+    <span class="chip ng" id="chipHand">HAND: NG</span>
+  </div>
+  <div id="camLabel">MEDIAPIPE LIVE</div>
+</div>
+
+<div id="flash"></div>
+
+<!-- リザルト -->
+<div id="result">
+  <div id="resultBox">
+    <div class="title">FINISH!</div>
+    <div class="max">最高速度</div>
+    <div class="speedNum"><span id="finalMaxSpeed">0</span><span style="font-size:32px; letter-spacing:0.1em;"> km/h</span></div>
+    <div class="dist">走行距離 <span id="finalDistance">0</span> m</div>
+  </div>
+</div>
+
+<!-- 許可画面 -->
+<div id="permScreen" class="overlay">
+  <h1>タービン・ドラッグ<br/>アフターバーン</h1>
+  <p>
+    AI画像認識（MediaPipe）であなたの<strong>頭の左右</strong>＝ステアリング、<strong>右手の高さ</strong>＝タービン出力を操作します。<br/>
+    まずはカメラ許可をお願いします。
+  </p>
+  <button id="permBtn">CAMERA ON / START</button>
+  <div id="permStatus"></div>
+</div>
+
+<!-- スライド/動画オーバーレイ -->
+<div id="stageOverlay" class="overlay" style="display:none;">
+  <img id="stageImg" style="display:none;" />
+  <video id="stageVideo" style="display:none;" playsinline></video>
+</div>
+
+<script>
+//===================== 状態 =====================
+const STATE = { PERM:'perm', SLIDE1:'slide1', SLIDE2:'slide2', SLIDE3:'slide3', OPENING:'opening', GAME:'game', ENDING_VIDEO:'ending_video', ENDING_IMAGE:'ending_image' };
+let state = STATE.PERM;
+
+const ASSETS = {
+  slide1: 'assets/1.jpg',
+  slide2: 'assets/2.jpg',
+  slide3: 'assets/3.jpg',
+  opening: 'assets/opening.mp4',
+  ending: 'assets/ending.mp4',
+  endingImg: 'assets/ending.jpg',
+  bgm: 'assets/bgm_game.mp3',
+};
+
+const TTS_URL = "https://cloud.3up-tec.jp:23005/proxy/tts/synthesize";
+
+// 入力値（MediaPipe → ゲーム）
+const input = {
+  steer: 0,    // -1 ~ 1（右が正）
+  throttle: 0, // 0 ~ 1
+  faceOk: false,
+  handOk: false,
+  noseX: 0.5,  // 0~1
+  handY: 0.7,
+};
+
+//===================== TTS（待たない設計） =====================
+let ttsAudio = null;
+async function speak(text, who='M', emotion='neutral') {
+  // who: 'M' 男性 / 'F' 女性
+  // captionに感情と性別ヒントを入れる
+  const captions = {
+    M_hype:   '熱血の若い男性ゲーム実況者の声で、息継ぎを荒く、興奮して叫ぶように。マイクが歪むくらい煽る。',
+    M_warn:   '低めの男性アナウンサーの声で、緊迫感を持って警告するように。短く鋭く。',
+    M_count:  '太く張りのある男性の声で、ボクシングのレフェリーのようにカウントを刻むように。',
+    F_hype:   '明るく華やかな女性アナウンサーの声で、笑顔を含ませながら高らかに実況するように。',
+    F_cheer:  '若い女性アシスタントの声で、可愛らしく弾むように応援するように。',
+    F_final:  '感極まった女性アナウンサーの声で、しっとりと余韻を残しながら締めくくるように。',
+  };
+  const key = `${who}_${emotion}`;
+  const caption = captions[key] || (who === 'F' ? captions.F_hype : captions.M_hype);
+
+  showSubtitle(text, who);
+  try {
+    const r = await fetch(TTS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, caption, format: 'mp3', num_steps: 14 }),
+    });
+    if (!r.ok) throw new Error('tts ' + r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    if (ttsAudio) { try { ttsAudio.pause(); } catch(e){} }
+    ttsAudio = new Audio(url);
+    ttsAudio.volume = 1.0;
+    // SFX用AudioContextに通してゲイン2.5倍ブースト
+    try {
+      if (SFX.ctx && SFX.ttsGain) {
+        const src = SFX.ctx.createMediaElementSource(ttsAudio);
+        src.connect(SFX.ttsGain);
+      }
+    } catch (_) { /* createMediaElementSource失敗時は素の再生にフォールバック */ }
+    ttsAudio.play().catch(() => {});
+  } catch (err) {
+    console.warn('TTS failed', err);
+  }
+}
+
+let subtitleTimer = null;
+function showSubtitle(text, who) {
+  const el = document.getElementById('subtitle');
+  el.querySelector('.who').textContent = who === 'F' ? '実況：女性アナウンサー' : '実況：男性アナウンサー';
+  el.querySelector('.msg').textContent = text;
+  el.classList.add('show');
+  clearTimeout(subtitleTimer);
+  subtitleTimer = setTimeout(() => el.classList.remove('show'), 4500);
+}
+
+//===================== 素材プリロード =====================
+function preloadImage(src) {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => res(null);
+    img.src = src;
+  });
+}
+function preloadVideo(src) {
+  return new Promise((res) => {
+    const v = document.createElement('video');
+    v.preload = 'auto';
+    v.src = src;
+    v.onloadeddata = () => res(v);
+    v.onerror = () => res(null);
+    // 一部ブラウザは loadeddata が来ないことがあるので念のため
+    setTimeout(() => res(v), 3000);
+  });
+}
+
+//===================== カメラ + MediaPipe =====================
+let videoEl, overlayCanvas, overlayCtx;
+let faceMesh, hands, cameraUtil;
+let camActive = false;
+
+async function startCamera() {
+  videoEl = document.getElementById('camVideo');
+  overlayCanvas = document.getElementById('camOverlay');
+  overlayCtx = overlayCanvas.getContext('2d');
+
+  // 自分でストリームを1回だけ取得し、MediaPipeにはそのvideo要素を使ってもらう
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: 640, height: 480, facingMode: 'user' },
+    audio: false
+  });
+  videoEl.srcObject = stream;
+  await videoEl.play();
+  // メタデータが揃うまで待つ（send呼び出しで失敗しないように）
+  if (videoEl.readyState < 2) {
+    await new Promise(res => videoEl.onloadeddata = () => res());
+  }
+
+  overlayCanvas.width = 640;
+  overlayCanvas.height = 480;
+
+  document.getElementById('camWrap').classList.add('show');
+
+  faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+  faceMesh.setOptions({
+    maxNumFaces: 1, refineLandmarks: false,
+    minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+  });
+  faceMesh.onResults(onFaceResults);
+
+  hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+  hands.setOptions({
+    maxNumHands: 2, modelComplexity: 0,
+    minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+  });
+  hands.onResults(onHandResults);
+
+  // MediaPipe Camera ヘルパーは内部で getUserMedia を再度呼ぶため使わない。
+  // 自前ループで既存のvideoEl（=1度きりの許可ストリーム）を流す。
+  let processing = false;
+  async function pump() {
+    if (!processing && videoEl.readyState >= 2) {
+      processing = true;
+      try {
+        await faceMesh.send({ image: videoEl });
+        await hands.send({ image: videoEl });
+      } catch (e) { /* 一時的失敗は無視 */ }
+      drawOverlay();
+      processing = false;
+    }
+    requestAnimationFrame(pump);
+  }
+  requestAnimationFrame(pump);
+  camActive = true;
+}
+
+// 直近の検出結果（描画用）
+let lastFace = null;
+let lastHands = null;
+
+function onFaceResults(res) {
+  lastFace = res;
+  if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+    const lm = res.multiFaceLandmarks[0];
+    // 鼻先：1番ランドマーク（nose tip）
+    const nose = lm[1];
+    if (nose) {
+      input.noseX = nose.x;
+      input.steer = Math.max(-1, Math.min(1, (nose.x - 0.5) * -3.0));
+      input.faceOk = true;
+    }
+  } else {
+    input.faceOk = false;
+  }
+  document.getElementById('chipFace').textContent = 'FACE: ' + (input.faceOk ? 'OK' : 'NG');
+  document.getElementById('chipFace').className = 'chip ' + (input.faceOk ? 'ok' : 'ng');
+}
+
+function onHandResults(res) {
+  lastHands = res;
+  let bestY = null;
+  if (res.multiHandLandmarks && res.multiHandLandedness) {/* no-op */}
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+    // 「右手」: カメラは反転表示しているため、ユーザ視点の右手は handedness で 'Right' or 'Left' どちらかになる。
+    // 単純化：もっとも上にある手を「アクセル手」として採用
+    for (const hand of res.multiHandLandmarks) {
+      // 手首=0、人差し指先端=8 の中点を採用
+      const wrist = hand[0];
+      const idx = hand[8];
+      const y = (wrist.y + idx.y) / 2;
+      if (bestY === null || y < bestY) bestY = y;
+    }
+  }
+  if (bestY !== null) {
+    input.handY = bestY;
+    // 0.85(下)〜0.15(上) を 0〜1
+    let t = (0.85 - bestY) / 0.7;
+    input.throttle = Math.max(0, Math.min(1, t));
+    input.handOk = true;
+  } else {
+    input.handOk = false;
+    input.throttle = Math.max(0, input.throttle - 0.02); // ゆっくり戻す
+  }
+  document.getElementById('chipHand').textContent = 'HAND: ' + (input.handOk ? 'OK' : 'NG');
+  document.getElementById('chipHand').className = 'chip ' + (input.handOk ? 'ok' : 'ng');
+}
+
+function drawOverlay() {
+  if (!overlayCtx) return;
+  const W = overlayCanvas.width, H = overlayCanvas.height;
+  overlayCtx.clearRect(0, 0, W, H);
+  // 反転表示に合わせて鏡像で描く
+  overlayCtx.save();
+  overlayCtx.translate(W, 0);
+  overlayCtx.scale(-1, 1);
+
+  // FaceMesh：顔の輪郭点を緑で間引き描画＋鼻に大マーカー
+  if (lastFace && lastFace.multiFaceLandmarks && lastFace.multiFaceLandmarks.length) {
+    const lm = lastFace.multiFaceLandmarks[0];
+    overlayCtx.fillStyle = 'rgba(0,240,255,0.85)';
+    for (let i = 0; i < lm.length; i += 4) {
+      const p = lm[i];
+      overlayCtx.fillRect(p.x * W - 1, p.y * H - 1, 2, 2);
+    }
+    const nose = lm[1];
+    if (nose) {
+      overlayCtx.beginPath();
+      overlayCtx.arc(nose.x * W, nose.y * H, 10, 0, Math.PI * 2);
+      overlayCtx.strokeStyle = '#1bff8d';
+      overlayCtx.lineWidth = 3;
+      overlayCtx.stroke();
+      // 中央線とのズレ
+      overlayCtx.strokeStyle = 'rgba(255,42,212,0.8)';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(W/2, 0);
+      overlayCtx.lineTo(W/2, H);
+      overlayCtx.stroke();
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(W/2, nose.y * H);
+      overlayCtx.lineTo(nose.x * W, nose.y * H);
+      overlayCtx.stroke();
+    }
+  }
+
+  // 手のランドマーク（接続線つき）
+  if (lastHands && lastHands.multiHandLandmarks) {
+    const conns = [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20],
+      [0,17]
+    ];
+    for (const hand of lastHands.multiHandLandmarks) {
+      overlayCtx.strokeStyle = 'rgba(247,226,62,0.9)';
+      overlayCtx.lineWidth = 3;
+      conns.forEach(([a,b]) => {
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(hand[a].x * W, hand[a].y * H);
+        overlayCtx.lineTo(hand[b].x * W, hand[b].y * H);
+        overlayCtx.stroke();
+      });
+      overlayCtx.fillStyle = 'rgba(255,122,24,0.95)';
+      for (const p of hand) {
+        overlayCtx.beginPath();
+        overlayCtx.arc(p.x * W, p.y * H, 4, 0, Math.PI * 2);
+        overlayCtx.fill();
+      }
+    }
+  }
+  overlayCtx.restore();
+
+  // 右側にゲージ（反転外）
+  // スロットルゲージ
+  const gx = W - 24, gy0 = 30, gh = H - 60;
+  overlayCtx.fillStyle = 'rgba(0,0,0,0.45)';
+  overlayCtx.fillRect(gx, gy0, 14, gh);
+  overlayCtx.fillStyle = '#ff2ad4';
+  const fillH = gh * input.throttle;
+  overlayCtx.fillRect(gx, gy0 + (gh - fillH), 14, fillH);
+  overlayCtx.strokeStyle = 'rgba(255,255,255,0.6)';
+  overlayCtx.strokeRect(gx, gy0, 14, gh);
+}
+
+//===================== Three.js シーン =====================
+let scene, camera, renderer;
+let road, car, jetFlame, turbineBlade, jetGlow;
+const obstacles = [];
+const neonPillars = [];
+const skyMeshes = [];
+const smokes = [];
+
+function initThree() {
+  const canvas = document.getElementById('gameCanvas');
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x05030f);
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0a0420, 30, 260);
+
+  camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 4.2, 9);
+
+  const amb = new THREE.AmbientLight(0xaaccff, 0.55);
+  scene.add(amb);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(8, 20, 12);
+  scene.add(dir);
+  const purple = new THREE.PointLight(0xff2ad4, 1.2, 60);
+  purple.position.set(-10, 6, -10);
+  scene.add(purple);
+  const cyan = new THREE.PointLight(0x00f0ff, 1.2, 60);
+  cyan.position.set(10, 6, -10);
+  scene.add(cyan);
+
+  // 道
+  const roadTex = makeRoadTexture();
+  const roadMat = new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.85, metalness: 0.1 });
+  const roadGeo = new THREE.PlaneGeometry(60, 2000);
+  road = new THREE.Mesh(roadGeo, roadMat);
+  road.rotation.x = -Math.PI / 2;
+  road.position.z = -700;
+  scene.add(road);
+
+  // サイドの光るライン
+  for (let side of [-1, 1]) {
+    const stripGeo = new THREE.BoxGeometry(0.4, 0.05, 2000);
+    const stripMat = new THREE.MeshBasicMaterial({ color: side < 0 ? 0x00f0ff : 0xff2ad4 });
+    const strip = new THREE.Mesh(stripGeo, stripMat);
+    strip.position.set(side * 9.5, 0.05, -700);
+    scene.add(strip);
+  }
+
+  // 背景ネオンビル（柱状）
+  const buildingMatA = new THREE.MeshStandardMaterial({ color: 0x111133, emissive: 0xff2ad4, emissiveIntensity: 0.6 });
+  const buildingMatB = new THREE.MeshStandardMaterial({ color: 0x111133, emissive: 0x00f0ff, emissiveIntensity: 0.6 });
+  for (let i = 0; i < 40; i++) {
+    const h = 8 + Math.random() * 30;
+    const w = 1.5 + Math.random() * 2.5;
+    const side = (i % 2 === 0) ? -1 : 1;
+    const z = -i * 35 - 20 + Math.random() * 10;
+    const m = (i % 2 === 0) ? buildingMatA : buildingMatB;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), m);
+    b.position.set(side * (16 + Math.random() * 6), h / 2, z);
+    scene.add(b);
+    skyMeshes.push({ mesh: b, baseZ: z, side });
+  }
+
+  // ネオンポール（路肩、近距離）
+  for (let i = 0; i < 30; i++) {
+    const isLeft = i % 2 === 0;
+    const g = new THREE.BoxGeometry(0.3, 5, 0.3);
+    const m = new THREE.MeshStandardMaterial({
+      color: 0x0a0420,
+      emissive: isLeft ? 0x00f0ff : 0xff2ad4,
+      emissiveIntensity: 1.5
+    });
+    const p = new THREE.Mesh(g, m);
+    p.position.set(isLeft ? -11 : 11, 2.5, -i * 14);
+    p.userData = { baseZ: -i * 14, isLeft };
+    scene.add(p);
+    neonPillars.push(p);
+  }
+
+  // 車
+  buildCar();
+}
+
+function makeRoadTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 1024;
+  const x = c.getContext('2d');
+  // ベース
+  const grad = x.createLinearGradient(0, 0, 0, 1024);
+  grad.addColorStop(0, '#0a0a1f');
+  grad.addColorStop(1, '#181030');
+  x.fillStyle = grad; x.fillRect(0, 0, 512, 1024);
+  // レーン区切り
+  x.fillStyle = '#222';
+  x.fillRect(160, 0, 4, 1024);
+  x.fillRect(348, 0, 4, 1024);
+  // センター点線
+  x.fillStyle = '#f7e23e';
+  for (let i = 0; i < 1024; i += 80) {
+    x.fillRect(252, i, 8, 40);
+  }
+  // ネオン反射点
+  x.fillStyle = 'rgba(0,240,255,0.15)';
+  for (let i = 0; i < 60; i++) x.fillRect(Math.random()*512, Math.random()*1024, 2, 2);
+  x.fillStyle = 'rgba(255,42,212,0.15)';
+  for (let i = 0; i < 60; i++) x.fillRect(Math.random()*512, Math.random()*1024, 2, 2);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(4, 80);
+  return t;
+}
+
+function buildCar() {
+  car = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff1c4b, roughness: 0.25, metalness: 0.8, emissive: 0x220000, emissiveIntensity: 0.6 });
+  const black = new THREE.MeshStandardMaterial({ color: 0x0a0a14, roughness: 0.9 });
+  const silver = new THREE.MeshStandardMaterial({ color: 0xc0c8d0, metalness: 0.95, roughness: 0.2 });
+  const neonMat = new THREE.MeshStandardMaterial({ color: 0x111122, emissive: 0x00f0ff, emissiveIntensity: 1.4 });
+
+  // メインシャーシ（細長い）
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.35, 5.5), bodyMat);
+  chassis.position.y = 0.55;
+  car.add(chassis);
+  // 細いノーズ
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.6, 16), bodyMat);
+  nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 0.55, -3.8);
+  car.add(nose);
+  // ノーズ先端ネオン
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), neonMat);
+  tip.position.set(0, 0.55, -5.1);
+  car.add(tip);
+
+  // タイヤ
+  const tireGeo = (r) => new THREE.CylinderGeometry(r, r, 0.45, 16);
+  function wheel(x, z, r) {
+    const w = new THREE.Mesh(tireGeo(r), black);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, r, z);
+    // ホイールハブ（光る）
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(r*0.5, r*0.5, 0.46, 12), neonMat);
+    hub.rotation.z = Math.PI / 2;
+    hub.position.copy(w.position);
+    car.add(hub);
+    return w;
+  }
+  car.add(wheel(0.95, -2.2, 0.45));
+  car.add(wheel(-0.95, -2.2, 0.45));
+  car.add(wheel(1.15, 1.6, 0.7));
+  car.add(wheel(-1.15, 1.6, 0.7));
+
+  // リアウィング
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 0.9), black);
+  wing.position.set(0, 2.4, 2.4);
+  car.add(wing);
+  for (let s of [-1, 1]) {
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.4), silver);
+    strut.position.set(s * 1.2, 1.7, 2.4);
+    car.add(strut);
+  }
+
+  // タービンエンジン（巨大）
+  const engineLen = 4.6, engineR = 1.05;
+  const engineOuter = new THREE.Mesh(new THREE.CylinderGeometry(engineR, engineR*0.85, engineLen, 32), silver);
+  engineOuter.rotation.x = Math.PI / 2;
+  engineOuter.position.set(0, 1.1, 1.2);
+  car.add(engineOuter);
+  // インテークリング（光る）
+  const intake = new THREE.Mesh(new THREE.TorusGeometry(engineR*1.02, 0.08, 12, 32), neonMat);
+  intake.rotation.y = Math.PI / 2;
+  intake.position.set(0, 1.1, -1.1);
+  car.add(intake);
+  // 内部
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(engineR-0.06, engineR*0.85-0.06, engineLen+0.05, 32),
+    new THREE.MeshStandardMaterial({ color: 0x020208, roughness: 0.9 }));
+  inner.rotation.x = Math.PI / 2;
+  inner.position.set(0, 1.1, 1.2);
+  car.add(inner);
+
+  // タービンブレード（回転する）
+  turbineBlade = new THREE.Group();
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x222233, metalness: 0.95, roughness: 0.2 });
+  const core = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.7, 16), bladeMat);
+  core.rotation.x = -Math.PI / 2;
+  turbineBlade.add(core);
+  const bladeGeo = new THREE.BoxGeometry(engineR*1.6, 0.04, 0.35);
+  for (let i = 0; i < 12; i++) {
+    const b = new THREE.Mesh(bladeGeo, bladeMat);
+    b.rotation.z = (i / 12) * Math.PI * 2;
+    b.rotation.x = 0.4;
+    turbineBlade.add(b);
+  }
+  turbineBlade.position.set(0, 1.1, 3.2);
+  car.add(turbineBlade);
+
+  // アフターバーン炎
+  const flameGeo = new THREE.ConeGeometry(engineR*0.85, 5.5, 32);
+  flameGeo.translate(0, -2.75, 0);
+  const flameMat = new THREE.MeshBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending });
+  jetFlame = new THREE.Mesh(flameGeo, flameMat);
+  jetFlame.rotation.x = -Math.PI / 2;
+  jetFlame.position.set(0, 1.1, 3.5);
+  car.add(jetFlame);
+
+  // グロー
+  const glowGeo = new THREE.SphereGeometry(1.6, 16, 16);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending });
+  jetGlow = new THREE.Mesh(glowGeo, glowMat);
+  jetGlow.position.set(0, 1.1, 3.6);
+  car.add(jetGlow);
+
+  car.position.set(0, 0, 0);
+  scene.add(car);
+}
+
+//===================== 障害物（タービンドラム） =====================
+function spawnObstacle(z) {
+  const lane = (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 4);
+  const g = new THREE.Group();
+  const drumMat = new THREE.MeshStandardMaterial({ color: 0x222236, metalness: 0.7, roughness: 0.4, emissive: 0xff2ad4, emissiveIntensity: 0.7 });
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 1.8, 24), drumMat);
+  drum.position.y = 0.9;
+  g.add(drum);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.06, 8, 24),
+    new THREE.MeshBasicMaterial({ color: 0x00f0ff }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.9;
+  g.add(ring);
+  g.position.set(lane, 0, z);
+  g.userData = { spin: Math.random()*2 - 1, hit: false };
+  scene.add(g);
+  obstacles.push(g);
+}
+
+function spawnSmoke() {
+  const geo = new THREE.SphereGeometry(0.4 + Math.random()*0.5, 6, 6);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.85 });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(car.position.x + (Math.random()-0.5)*0.6, 1.3, car.position.z + 3.6);
+  m.userData = {
+    vx: (Math.random()-0.5)*1.5, vy: 1.8 + Math.random()*2, vz: 2 + Math.random()*3,
+    life: 1.0
+  };
+  scene.add(m);
+  smokes.push(m);
+}
+
+//===================== ゲーム本体 =====================
+const GAME = {
+  duration: 30,
+  timeLeft: 30,
+  speed: 0,
+  maxSpeed: 0,
+  distance: 0,
+  topSpeedLimit: 480,  // km/h
+  heat: 0,
+  overheated: false,
+  posX: 0,
+  active: false,
+  startedAt: 0,
+  lastObstacleZ: -80,
+  countdown: 3.0,    // 3,2,1,GOの残り秒（>0の間は動かない）
+  started: false,    // GO!後だけ true（速度が動き始める）
+};
+
+//===================== サウンドエンジン（WebAudio） =====================
+const SFX = {
+  ctx: null, masterGain: null,
+  jetOsc1: null, jetOsc2: null, jetFilter: null, jetGain: null,
+  noiseBuffer: null,
+};
+function initSfx() {
+  if (SFX.ctx) {
+    if (SFX.ctx.state === 'suspended') SFX.ctx.resume();
+    return;
+  }
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  SFX.ctx = ctx;
+  if (ctx.state === 'suspended') ctx.resume();
+  SFX.masterGain = ctx.createGain();
+  SFX.masterGain.gain.value = 0.9;
+  SFX.masterGain.connect(ctx.destination);
+  // TTS用の別マスタ（実況を大きく）
+  SFX.ttsGain = ctx.createGain();
+  SFX.ttsGain.gain.value = 2.5;
+  SFX.ttsGain.connect(ctx.destination);
+
+  // ジェット連続音（2つのオシレータをデチューン→ローパス）
+  const o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 60;
+  const o2 = ctx.createOscillator(); o2.type = 'square';   o2.frequency.value = 62;
+  const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600; filt.Q.value = 4;
+  const g = ctx.createGain(); g.gain.value = 0;
+  o1.connect(filt); o2.connect(filt); filt.connect(g); g.connect(SFX.masterGain);
+  o1.start(); o2.start();
+  SFX.jetOsc1 = o1; SFX.jetOsc2 = o2; SFX.jetFilter = filt; SFX.jetGain = g;
+
+  // ノイズバッファ（爆発・タービンノイズ用）
+  const buf = ctx.createBuffer(1, ctx.sampleRate * 1.0, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  SFX.noiseBuffer = buf;
+}
+function setJetSound(throttle, speed, overheated) {
+  if (!SFX.ctx) return;
+  const now = SFX.ctx.currentTime;
+  // 周波数：throttle と speed に比例
+  let f = 50 + throttle * 220 + speed * 0.6;
+  let vol = (0.05 + throttle * 0.45) * (speed > 8 ? 1 : speed / 8);
+  if (overheated) { f = 35 + Math.random() * 25; vol = 0.18 + Math.random() * 0.1; }
+  SFX.jetOsc1.frequency.setTargetAtTime(f, now, 0.08);
+  SFX.jetOsc2.frequency.setTargetAtTime(f * 1.04, now, 0.08);
+  SFX.jetFilter.frequency.setTargetAtTime(400 + throttle * 1800, now, 0.1);
+  SFX.jetGain.gain.setTargetAtTime(vol, now, 0.08);
+}
+function silenceJet() {
+  if (!SFX.ctx) return;
+  SFX.jetGain.gain.setTargetAtTime(0, SFX.ctx.currentTime, 0.05);
+}
+function playBeep(freq, duration, gainVal=0.4) {
+  if (!SFX.ctx) return;
+  const ctx = SFX.ctx, now = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = freq;
+  const g = ctx.createGain(); g.gain.value = 0;
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(gainVal, now + 0.01);
+  g.gain.setValueAtTime(gainVal, now + duration - 0.04);
+  g.gain.linearRampToValueAtTime(0, now + duration);
+  o.connect(g); g.connect(SFX.masterGain);
+  o.start(now); o.stop(now + duration + 0.02);
+}
+function playExplosion() {
+  if (!SFX.ctx) return;
+  const ctx = SFX.ctx, now = ctx.currentTime;
+  // ノイズバースト
+  const src = ctx.createBufferSource(); src.buffer = SFX.noiseBuffer;
+  const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 1800;
+  const g = ctx.createGain(); g.gain.value = 0;
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.9, now + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+  src.connect(filt); filt.connect(g); g.connect(SFX.masterGain);
+  src.start(now); src.stop(now + 0.75);
+  // 低音ドン
+  const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 90;
+  const og = ctx.createGain(); og.gain.value = 0;
+  og.gain.setValueAtTime(0.0001, now);
+  og.gain.exponentialRampToValueAtTime(0.8, now + 0.02);
+  og.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+  o.frequency.exponentialRampToValueAtTime(35, now + 0.4);
+  o.connect(og); og.connect(SFX.masterGain);
+  o.start(now); o.stop(now + 0.5);
+}
+
+//===================== 爆発エフェクト（Three.js） =====================
+const explosions = [];
+function spawnExplosion(x, y, z) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  const particles = [];
+  const count = 22;
+  for (let i = 0; i < count; i++) {
+    const color = [0xffaa00, 0xff6622, 0xffdd55, 0xff2244][Math.floor(Math.random()*4)];
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.25 + Math.random()*0.35, 8, 8),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending })
+    );
+    const angle = Math.random() * Math.PI * 2;
+    const up = 1.5 + Math.random() * 4;
+    const speed = 4 + Math.random() * 8;
+    m.userData = {
+      vx: Math.cos(angle) * speed,
+      vy: up,
+      vz: Math.sin(angle) * speed * 0.5,
+      life: 1.0,
+    };
+    group.add(m);
+    particles.push(m);
+  }
+  // 中心の閃光（拡大して消える球）
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(0.6, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffee, transparent: true, opacity: 1, blending: THREE.AdditiveBlending })
+  );
+  flash.userData = { isFlash: true, life: 1.0 };
+  group.add(flash); particles.push(flash);
+  scene.add(group);
+  explosions.push({ group, particles });
+}
+function updateExplosions(dt) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const ex = explosions[i];
+    let alive = false;
+    for (const p of ex.particles) {
+      if (p.userData.isFlash) {
+        p.userData.life -= dt * 4;
+        p.scale.setScalar(1 + (1 - Math.max(0, p.userData.life)) * 6);
+        p.material.opacity = Math.max(0, p.userData.life);
+      } else {
+        p.position.x += p.userData.vx * dt;
+        p.position.y += p.userData.vy * dt;
+        p.position.z += p.userData.vz * dt;
+        p.userData.vy -= 9 * dt; // 重力
+        p.userData.life -= dt * 1.4;
+        p.material.opacity = Math.max(0, p.userData.life);
+      }
+      if (p.userData.life > 0) alive = true;
+    }
+    if (!alive) {
+      scene.remove(ex.group);
+      ex.particles.forEach(p => { p.geometry.dispose(); p.material.dispose(); });
+      explosions.splice(i, 1);
+    }
+  }
+}
+
+let bgmEl = null;
+
+function startGame() {
+  state = STATE.GAME;
+  document.getElementById('hud').classList.add('show');
+  GAME.timeLeft = GAME.duration;
+  GAME.speed = 0; GAME.maxSpeed = 0; GAME.distance = 0;
+  GAME.heat = 0; GAME.overheated = false; GAME.posX = 0;
+  GAME.active = true; GAME.startedAt = performance.now();
+  GAME.lastObstacleZ = -60;
+  GAME.countdown = 3.0;
+  GAME.started = false;
+  GAME.lastSpawnAt = 0;
+  // 障害物クリア
+  for (const o of obstacles) scene.remove(o);
+  obstacles.length = 0;
+  for (const s of smokes) scene.remove(s);
+  smokes.length = 0;
+
+  // SFX初期化（ユーザ操作経由の文脈なのでautoplay許可される）
+  initSfx();
+
+  // BGM（カウントダウン後に開始）
+  setTimeout(() => {
+    try {
+      bgmEl = new Audio(ASSETS.bgm);
+      bgmEl.loop = true; bgmEl.volume = 0.5;
+      bgmEl.play().catch(()=>{});
+    } catch(e){}
+  }, 3000);
+
+  // カウントダウン：3 → 2 → 1 → ピー(GO!)
+  playBeep(880, 0.18, 0.5);
+  setTimeout(() => playBeep(880, 0.18, 0.5), 1000);
+  setTimeout(() => playBeep(880, 0.18, 0.5), 2000);
+  setTimeout(() => playBeep(1320, 0.5, 0.55), 3000);
+
+  // 実況：カウント中
+  speak('3、2、1、ゴー！タービン全開、行くぞぉぉ！', 'M', 'count');
+  // GO!直後にゲーム実況スケジュール開始
+  setTimeout(() => scheduleCommentary(), 3000);
+}
+
+let commentaryTimers = [];
+function clearCommentary() {
+  commentaryTimers.forEach(t => clearTimeout(t));
+  commentaryTimers = [];
+}
+function scheduleCommentary() {
+  clearCommentary();
+  const sched = [
+    [3,  'F', 'hype',  '飛び出した！加速がエグい、ネオンの道頓堀を突っ切るぅ！'],
+    [9,  'M', 'hype',  'タービン唸る！もっとだ、もっと上げろぉ！'],
+    [16, 'F', 'cheer', 'いい走り！頭で避けて、手を高く、限界突破！'],
+    [22, 'M', 'hype',  '記録更新が見えてきた、踏み抜けぇ！'],
+    [27, 'F', 'hype',  'ラストスパート！魂を燃やせぇ！'],
+  ];
+  for (const [t, who, emo, text] of sched) {
+    commentaryTimers.push(setTimeout(() => {
+      if (state === STATE.GAME && GAME.active) speak(text, who, emo);
+    }, t * 1000));
+  }
+}
+
+let heatWarnCooldown = 0;
+
+function updateGame(dt) {
+  if (!GAME.active) return;
+
+  // カウントダウン処理：3,2,1,GO!の間は完全停止
+  if (!GAME.started) {
+    GAME.countdown -= dt;
+    GAME.speed = 0;
+    // タービンはアイドル回転だけ
+    if (turbineBlade) turbineBlade.rotation.z += dt * 4;
+    setJetSound(0, 0, false);
+    document.getElementById('speedValue').textContent = '0';
+    document.getElementById('timeValue').textContent = Math.ceil(GAME.countdown > 0 ? GAME.countdown : GAME.duration);
+    document.getElementById('throttleText').textContent = Math.floor(input.throttle * 100) + '%';
+    document.getElementById('throttleFill').style.width = (input.throttle * 100) + '%';
+    if (GAME.countdown <= 0) {
+      GAME.started = true;
+    } else {
+      return;
+    }
+  }
+
+  // 入力
+  const steerSmoothed = THREE.MathUtils.lerp(GAME.lastSteer || 0, input.steer, 0.18);
+  GAME.lastSteer = steerSmoothed;
+  const throttle = input.throttle;
+
+  // 物理（速度と加速）
+  let accel = (throttle * 220) - (GAME.speed * 0.22);
+  if (GAME.overheated) accel = -120;
+  GAME.speed += accel * dt;
+  GAME.speed = Math.max(0, Math.min(GAME.topSpeedLimit, GAME.speed));
+  if (GAME.speed > GAME.maxSpeed) GAME.maxSpeed = GAME.speed;
+
+  GAME.distance += GAME.speed * dt * 0.27;
+  GAME.timeLeft -= dt;
+  if (GAME.timeLeft <= 0) {
+    GAME.timeLeft = 0;
+    finishGame();
+    return;
+  }
+
+  // ジェットエンジン音をスロットルと速度に連動
+  setJetSound(throttle, GAME.speed, GAME.overheated);
+
+  // ステア（速度依存感度）
+  GAME.posX += steerSmoothed * (4 + GAME.speed * 0.025) * dt * 4;
+  // 路肩反発
+  if (GAME.posX > 8.5) { GAME.posX = 8.5; GAME.speed *= 0.96; }
+  if (GAME.posX < -8.5) { GAME.posX = -8.5; GAME.speed *= 0.96; }
+
+  // ヒート
+  if (GAME.overheated) {
+    GAME.heat -= 35 * dt;
+    if (GAME.heat <= 0) { GAME.heat = 0; GAME.overheated = false; speak('再起動！もう一度ぶち込め！', 'M', 'warn'); }
+  } else {
+    if (throttle > 0.7) GAME.heat += (throttle - 0.7) * 95 * dt;
+    else GAME.heat -= 28 * dt;
+    GAME.heat = Math.max(0, Math.min(100, GAME.heat));
+    if (GAME.heat >= 100) {
+      GAME.overheated = true;
+      speak('オーバーヒート！クールダウン！', 'M', 'warn');
+    } else if (GAME.heat > 80 && performance.now() > heatWarnCooldown) {
+      speak('熱い、熱い！冷ませぇ！', 'M', 'warn');
+      heatWarnCooldown = performance.now() + 7000;
+    }
+  }
+  document.getElementById('flash').className = (GAME.overheated || GAME.heat > 85) ? 'heat' : '';
+
+  // 障害物スポーン（控えめに）
+  const farZ = -180;
+  const interval = Math.max(22, 38 - GAME.maxSpeed * 0.04);
+  if (GAME.distance - (GAME.lastSpawnAt || 0) > interval) {
+    spawnObstacle(farZ);
+    GAME.lastSpawnAt = GAME.distance;
+  }
+
+  // 障害物移動＆当たり判定
+  const moveZ = GAME.speed * dt * 0.45;
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.position.z += moveZ;
+    o.children[0].rotation.y += dt * 1.5;
+    o.children[1].rotation.z += dt * 2.0;
+    // 当たり判定（車のおおよそ位置）
+    const dx = o.position.x - GAME.posX;
+    const dz = o.position.z - car.position.z;
+    if (!o.userData.hit && Math.abs(dz) < 1.5 && Math.abs(dx) < 1.4) {
+      o.userData.hit = true;
+      GAME.speed *= 0.45;
+      GAME.heat = Math.min(100, GAME.heat + 18);
+      flashHit();
+      // 爆発エフェクト＋効果音
+      spawnExplosion(o.position.x, 1.2, o.position.z);
+      playExplosion();
+      if (performance.now() > (GAME.lastHitVoice || 0)) {
+        speak('ぶつけたぁー！立て直せ！', 'F', 'cheer');
+        GAME.lastHitVoice = performance.now() + 4000;
+      }
+    }
+    if (o.position.z > 20) {
+      scene.remove(o);
+      o.children.forEach(c => { c.geometry.dispose(); c.material.dispose && c.material.dispose(); });
+      obstacles.splice(i, 1);
+    }
+  }
+
+  // 爆発エフェクト更新
+  updateExplosions(dt);
+
+  // 黒煙
+  if (GAME.heat > 60 || GAME.overheated) {
+    if (Math.random() < (GAME.heat / 110)) spawnSmoke();
+  }
+  for (let i = smokes.length - 1; i >= 0; i--) {
+    const s = smokes[i];
+    s.position.x += s.userData.vx * dt;
+    s.position.y += s.userData.vy * dt;
+    s.position.z += s.userData.vz * dt;
+    s.scale.multiplyScalar(1 + dt * 1.6);
+    s.userData.life -= dt * 1.1;
+    s.material.opacity = Math.max(0, s.userData.life);
+    if (s.userData.life <= 0 || s.position.z > 25) {
+      scene.remove(s); s.geometry.dispose(); s.material.dispose();
+      smokes.splice(i, 1);
+    }
+  }
+
+  // 車の見た目
+  car.position.x = GAME.posX;
+  car.rotation.y = -steerSmoothed * 0.18;
+  car.rotation.z = -steerSmoothed * 0.14;
+  // 揺れ
+  car.position.y = GAME.speed > 50 ? Math.sin(performance.now() * 0.04) * 0.04 : 0;
+
+  // タービン回転
+  if (turbineBlade) {
+    let rs = (GAME.speed * 0.06 + throttle * 35 + 3) * dt;
+    if (GAME.overheated) rs = (Math.random() * 6) * dt;
+    turbineBlade.rotation.z += rs;
+  }
+  // 炎
+  const opc = GAME.overheated ? 0.1 : 0.25 + throttle * 0.85;
+  jetFlame.material.opacity = opc;
+  jetFlame.scale.set(
+    1 + throttle*0.3 + Math.random()*0.05,
+    0.6 + throttle*2.4 + Math.random()*0.25,
+    1 + throttle*0.3 + Math.random()*0.05
+  );
+  jetGlow.material.opacity = 0.18 + throttle*0.4;
+  jetGlow.scale.setScalar(1 + throttle * 0.8);
+
+  // カメラ追従
+  const targetCamX = GAME.posX * 0.65;
+  camera.position.x += (targetCamX - camera.position.x) * dt * 6;
+  camera.position.y = 4.2 + throttle * 0.4;
+  camera.lookAt(GAME.posX, 1.0, car.position.z - 18);
+
+  // 道路スクロール
+  road.material.map.offset.y -= GAME.speed * dt * 0.018;
+
+  // ネオンポール流す
+  for (const p of neonPillars) {
+    p.position.z += GAME.speed * dt * 0.5;
+    if (p.position.z > 30) p.position.z -= 14 * 30;
+  }
+  // 背景ビル
+  for (const b of skyMeshes) {
+    b.mesh.position.z += GAME.speed * dt * 0.35;
+    if (b.mesh.position.z > 50) b.mesh.position.z -= 40 * 35;
+  }
+
+  // HUD更新
+  document.getElementById('speedValue').textContent = Math.floor(GAME.speed);
+  document.getElementById('maxSpeedValue').textContent = Math.floor(GAME.maxSpeed);
+  document.getElementById('timeValue').textContent = Math.ceil(GAME.timeLeft);
+  document.getElementById('throttleText').textContent = Math.floor(throttle * 100) + '%';
+  document.getElementById('throttleFill').style.width = (throttle * 100) + '%';
+  document.getElementById('heatText').textContent = GAME.overheated ? 'OVERHEAT!' : (Math.floor(GAME.heat) + '%');
+  document.getElementById('heatFill').style.width = GAME.heat + '%';
+}
+
+function flashHit() {
+  const flash = document.getElementById('flash');
+  flash.style.background = 'rgba(255,200,0,0.4)';
+  setTimeout(() => { flash.style.background = 'rgba(0,0,0,0)'; }, 120);
+}
+
+function finishGame() {
+  GAME.active = false;
+  clearCommentary();
+  silenceJet();
+  if (bgmEl) { try { bgmEl.pause(); } catch(e){} }
+  const ms = Math.floor(GAME.maxSpeed);
+  document.getElementById('finalMaxSpeed').textContent = ms;
+  document.getElementById('finalDistance').textContent = Math.floor(GAME.distance);
+  document.getElementById('result').classList.add('show');
+  speak(`ゴール！最高速度 ${ms} キロ。素晴らしい走りでしたぁ！`, 'F', 'final');
+  // 4秒後にエンディング動画
+  setTimeout(() => {
+    document.getElementById('result').classList.remove('show');
+    document.getElementById('hud').classList.remove('show');
+    playEndingVideo();
+  }, 4800);
+}
+
+//===================== オーバーレイ管理（スライド/動画） =====================
+function showOverlayImage(src, hint) {
+  const ov = document.getElementById('stageOverlay');
+  const img = document.getElementById('stageImg');
+  const vid = document.getElementById('stageVideo');
+  vid.style.display = 'none'; vid.pause && vid.pause();
+  img.src = src;
+  img.style.display = 'block';
+  ov.style.display = 'flex';
+  setHint(hint);
+}
+function showOverlayVideo(src, onEnded, hint) {
+  const ov = document.getElementById('stageOverlay');
+  const img = document.getElementById('stageImg');
+  const vid = document.getElementById('stageVideo');
+  img.style.display = 'none';
+  vid.src = src;
+  vid.style.display = 'block';
+  vid.muted = false;
+  vid.volume = 1.0;
+  vid.onended = () => { hideOverlay(); onEnded && onEnded(); };
+  ov.style.display = 'flex';
+  vid.play().catch(() => {
+    // autoplay制限。ミュートで試行
+    vid.muted = true; vid.play().catch(()=>{});
+  });
+  setHint(hint);
+}
+function hideOverlay() {
+  const ov = document.getElementById('stageOverlay');
+  ov.style.display = 'none';
+  const vid = document.getElementById('stageVideo');
+  try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch(e){}
+  setHint('');
+}
+let hintEl = null;
+function setHint(text) {
+  if (!text) { if (hintEl) { hintEl.remove(); hintEl = null; } return; }
+  if (!hintEl) { hintEl = document.createElement('div'); hintEl.className = 'hint'; document.body.appendChild(hintEl); }
+  hintEl.textContent = text;
+}
+
+//===================== シーケンス =====================
+function gotoSlide1() {
+  state = STATE.SLIDE1;
+  showOverlayImage(ASSETS.slide1, 'クリックで次へ');
+}
+function gotoSlide2() {
+  state = STATE.SLIDE2;
+  showOverlayImage(ASSETS.slide2, 'クリックで次へ');
+}
+function gotoSlide3() {
+  state = STATE.SLIDE3;
+  showOverlayImage(ASSETS.slide3, 'クリックでオープニング動画');
+}
+function playOpening() {
+  state = STATE.OPENING;
+  showOverlayVideo(ASSETS.opening, () => {
+    startGame();
+  }, 'Enterでスキップ');
+}
+function playEndingVideo() {
+  state = STATE.ENDING_VIDEO;
+  showOverlayVideo(ASSETS.ending, () => {
+    showEndingImage();
+  }, 'Enterでスキップ');
+}
+function showEndingImage() {
+  state = STATE.ENDING_IMAGE;
+  showOverlayImage(ASSETS.endingImg, '');
+}
+
+// クリック / Enter 入力
+document.addEventListener('click', (e) => {
+  // permission画面のボタンクリックは別ハンドラ
+  if (state === STATE.SLIDE1) { gotoSlide2(); return; }
+  if (state === STATE.SLIDE2) { gotoSlide3(); return; }
+  if (state === STATE.SLIDE3) { playOpening(); return; }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    if (state === STATE.OPENING) {
+      const vid = document.getElementById('stageVideo');
+      try { vid.currentTime = vid.duration - 0.01; } catch(_) {}
+      // onended に任せる。フォールバック：直接遷移
+      hideOverlay(); startGame();
+    } else if (state === STATE.ENDING_VIDEO) {
+      const vid = document.getElementById('stageVideo');
+      try { vid.currentTime = vid.duration - 0.01; } catch(_) {}
+      hideOverlay(); showEndingImage();
+    } else if (state === STATE.SLIDE1) { gotoSlide2(); }
+    else if (state === STATE.SLIDE2) { gotoSlide3(); }
+    else if (state === STATE.SLIDE3) { playOpening(); }
+  }
+});
+
+//===================== メインループ =====================
+let lastT = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = lastT === 0 ? 0.016 : Math.min((t - lastT)/1000, 0.05);
+  lastT = t;
+  if (scene && renderer && camera) {
+    if (state === STATE.GAME) updateGame(dt);
+    // どの状態でも背景をうっすら回す（待機中も寂しくないように）
+    if (state !== STATE.GAME && car) {
+      car.rotation.y = Math.sin(t*0.0006) * 0.2;
+      if (turbineBlade) turbineBlade.rotation.z += dt * 4;
+    }
+    renderer.render(scene, camera);
+  }
+}
+
+//===================== リサイズ =====================
+window.addEventListener('resize', () => {
+  if (!renderer) return;
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+//===================== 起動 =====================
+document.getElementById('permBtn').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const status = document.getElementById('permStatus');
+  const btn = document.getElementById('permBtn');
+  btn.disabled = true;
+  status.textContent = 'カメラ起動中...';
+
+  // ユーザ操作内なのでここでAudioContextを起こす（実況TTSを以降ブースト経路に乗せる）
+  initSfx();
+
+  try {
+    await startCamera();
+  } catch (err) {
+    console.error(err);
+    status.textContent = 'カメラの許可に失敗しました: ' + err.message;
+    btn.disabled = false;
+    return;
+  }
+
+  status.textContent = '素材を読み込み中...';
+  // 並行プリロード
+  await Promise.all([
+    preloadImage(ASSETS.slide1),
+    preloadImage(ASSETS.slide2),
+    preloadImage(ASSETS.slide3),
+    preloadImage(ASSETS.endingImg),
+    preloadVideo(ASSETS.opening),
+    preloadVideo(ASSETS.ending),
+  ]);
+
+  // Three.js初期化
+  initThree();
+  // ループ開始
+  requestAnimationFrame(loop);
+
+  // 許可画面をフェードアウト
+  const perm = document.getElementById('permScreen');
+  perm.style.transition = 'opacity 0.5s';
+  perm.style.opacity = '0';
+  setTimeout(() => { perm.style.display = 'none'; gotoSlide1(); }, 550);
+});
+</script>
+</body>
+</html>
